@@ -1,4 +1,3 @@
-
 #include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_LEDBackpack.h>
@@ -24,7 +23,7 @@ void    setup()
     Serial.begin(9600);
 #endif
 
-    display.begin();
+    display.begin(0x70);
     if( !accel.begin()  && Serial) {
         Serial.println("Crap! Accelerometer failed to initialized");
     }
@@ -105,25 +104,27 @@ void    loop()
     accel.getEvent(&event);
 
     static sensors_vec_t    previous = center;
-    static float x = 0.0;
-    static float y = 0.0;
+    static float x = kBoardSize/2.0;
+    static float y = kBoardSize/2.0;
+    const float kMinimumDifficulty = 0.1;
+    const float kDifficultyIncrement = 0.05;
+    static float difficulty = kMinimumDifficulty;
     static int    lives = 5;
-    const float xCenter = kBoardSize/2.0;
-    const float yCenter = kBoardSize/2.0;
     
     
     if ( lives > 0 ) {
-        drawBallAt(int(xCenter+x),int(yCenter+y),colorForOffset(x,y));
+        drawBallAt(int(x),int(y),colorForOffset(x,y));
         
-        boolean hitVWall = abs(y) >= kBoardSize/2.0;
-        boolean hitHWall = abs(x)>= kBoardSize/2.0;
+        #define  QUADRANT(v)  (v-(kBoardSize/2.0))
+        boolean hitVWall = abs(QUADRANT(y)) >= kBoardSize/2.0;
+        boolean hitHWall = abs(QUADRANT(x))>= kBoardSize/2.0;
         if ( hitVWall || hitHWall ) {
             int wall = 0;
             if ( hitHWall ) {
-                wall |= (x/abs(x) > 0.0) ? kRightWall : kLeftWall;
+                wall |= (QUADRANT(x)/abs(QUADRANT(x)) > 0.0) ? kRightWall : kLeftWall;
             }
             if ( hitVWall ) {
-                wall |= (y/abs(y)>0.0) ? kBottomWall : kTopWall;
+                wall |= (QUADRANT(y)/abs(QUADRANT(y)) > 0.0) ? kBottomWall : kTopWall;
             }
             drawWallCollision(wall,LED_RED);
         }
@@ -131,38 +132,65 @@ void    loop()
         display.writeDisplay();
         
         if ( hitHWall || hitVWall ) {
+            Serial.println("Collision!");
             --lives;
             previous = center;
-            x = y = 0.0;
-            delay(DELAY*4);    // extra delay
+            x = y = kBoardSize/2.0;
+            difficulty /= 2.0;  // start at half the previous difficulty
+            lostLife();
         }
         else {       
             sensors_vec_t accelData = event.acceleration;
-            #define    DELTA_SCALE(f)    (f/4.0)
+            #define    DELTA_SCALE(f)    (f*difficulty)
             float dx = DELTA_SCALE(center.x - (previous.x = lowPassFilter( accelData.x, previous.x)));
             float dy = DELTA_SCALE(center.y - (previous.y = lowPassFilter( accelData.y, previous.y)));
-            
-        //    PrintAccel("Center",center);
-        //    PrintAccel("Previous",previous);
-        //    PrintAccel("Current",accelData);
         
-            x = constrain(x+dx,-float(kBoardSize>>1),float(kBoardSize>>1)); 
-            y = constrain(y-dy,-float(kBoardSize>>1),float(kBoardSize>>1));
+            x = constrain(x+dx,0.0,kBoardSize-1); 
+            y = constrain(y-dy,0.0,kBoardSize-1);
+            
+            difficulty += kDifficultyIncrement;
         }
-        delay(DELAY);
    }
     else if ( lives == 0 ) {
+      Serial.println("Game Over!");
+      gameOver();
         --lives;
-        display.setTextWrap(false);
-        display.setTextSize(1);
-        display.setTextColor(LED_RED);
-        for ( int16_t x = 8;x>=-64;--x ) {
-            display.clear();
-            display.setCursor(x,0);
-            display.print("Game Over!");
-            display.writeDisplay();
-            delay(100);
-        }
+    }
+    
+    delay(DELAY);
+}
+void  lostLife()
+{
+static const uint8_t PROGMEM skull_bmp[] =
+              { B00111100,
+                B01000010,
+                B10100101,
+                B10000001,
+                B01000010,
+                B01011010,
+                B01000010,
+                B00111100 };
+
+        display.clear();
+        display.setRotation(1);
+        display.drawBitmap(0, 0, skull_bmp, 8, 8, LED_YELLOW);
+        display.writeDisplay();
+        delay(1000);
+}
+
+void  gameOver()
+{
+      display.setTextWrap(false);
+      display.setTextSize(1);
+      display.setTextColor(LED_RED);
+      display.setRotation(1);
+      for ( int16_t c = 8;c>=-64;--c ) {
+          display.clear();
+          display.setCursor(c,0);
+          display.print("Game Over!");
+          display.writeDisplay();
+          delay(100);
+      }
         
 static const uint8_t PROGMEM frown_bmp[] =
               { B00111100,
@@ -174,9 +202,8 @@ static const uint8_t PROGMEM frown_bmp[] =
                 B01000010,
                 B00111100 };
 
-          display.clear();
-          display.drawBitmap(0, 0, frown_bmp, 8, 8, LED_RED);
-          display.writeDisplay();
-    }
+        display.clear();
+        display.drawBitmap(0, 0, frown_bmp, 8, 8, LED_RED);
+        display.writeDisplay();
 }
 
